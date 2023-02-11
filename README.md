@@ -1,5 +1,5 @@
-# Connext Liquidity Bootstraping
-This repository was used to 
+# Connext Liquidity Bootstraping Analytics
+This repository was used to provide an analysis on Connext's liquidity Bootstraping campaign.
 
 ## Requirements
 The development use the following setups:
