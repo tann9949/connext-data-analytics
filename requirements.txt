@@ -1,0 +1,10 @@
+# dev environment / analytics
+jupyter
+jupyterlab
+matplotlib
+omegaconf
+
+# packages
+requests
+omegaconf
+python-dotenv
