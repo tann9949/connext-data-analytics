@@ -1,12 +1,14 @@
+import json
 import logging
 import os
+import random
 import time
-from typing import List, Union, Dict
+from typing import Dict, List, Union
 
-from requests import Session
+import requests
 
 from api.constant import Chain
-
+from api.contract import ConnextDiamond
 
 
 class ScanTxn(object):
@@ -34,6 +36,7 @@ class ScanTxn(object):
         confirmations: Union[int, str],
         methodId: str,
         functionName: str,
+        logs: List[dict] = None,
         **kwargs
     ) -> None:
         self.chain = chain
@@ -73,6 +76,8 @@ class ScanTxn(object):
         self.methodId = methodId
         self.functionName = functionName
 
+        self.logs = logs
+
         self.tx_url = f"{self.scan_url}/{self.hash}"
 
     def __repr__(self) -> str:
@@ -102,7 +107,14 @@ class ScanTxn(object):
             "methodId": self.methodId,
             "functionName": self.functionName,
             "tx_url": self.tx_url,
+            "logs": self.logs,
         }
+
+    @staticmethod
+    def from_json(json_path: str) -> "ScanTxn":
+        with open(json_path, "r") as f:
+            json_obj = json.loads(f.read())
+        return ScanTxn(**json_obj)
 
 
 class ScanAPI(object):
@@ -116,9 +128,11 @@ class ScanAPI(object):
         Chain.GNOSIS: 'https://api.gnosisscan.io/api',
     }
 
-    def __init__(self, chain: Chain) -> None:
+    def __init__(self, chain: Chain, apikey_schedule: str = "roundrobin") -> None:
         self.api_url = ScanAPI._base_url[chain]
         self.chain = chain
+        self.diamond_contract = ConnextDiamond(self.chain)
+        self.provider = ConnextDiamond.get_default_provider(self.chain)
         self.api_idx = 0
         
         if chain == Chain.ETHEREUM:
@@ -136,11 +150,91 @@ class ScanAPI(object):
         else:
             raise Exception("Chain {chain} not supported")
 
-    def __get_apikey(self) -> str:
+        logging.debug(f"Using {len(self.apikeys)} apikeys for {chain}")
+
+        self.apikey_schedule = apikey_schedule
+
+    def get_apikey(self) -> str:
         """Get the next apikey in the list of apikeys. Using a round-robin"""
-        apikey = self.apikeys[self.api_idx]
-        self.api_idx = (self.api_idx + 1) % len(self.apikeys)
+        if self.apikey_schedule == "roundrobin":
+            logging.debug(f"Current apikey index: {self.api_idx}")
+            self.api_idx = (self.api_idx + 1) % len(self.apikeys)
+            logging.debug(f"New apikey index: {self.api_idx}")
+            apikey = self.apikeys[self.api_idx]
+            logging.debug(f"[{self.chain}] Using apikey ({self.api_idx}/{len(self.apikeys)})")
+        elif self.apikey_schedule == "random":
+            self.api_idx = random.choice(range(len(self.apikeys)))
+            apikey = self.apikeys[self.api_idx]
+            logging.debug(f"[{self.chain}] Using apikey ({self.api_idx}/{len(self.apikeys)})")
         return apikey
+
+    def request_with_retry(
+        self,
+        url: str,
+        params: Dict[str, str],
+        max_attempt: int = 20,
+        wait_time: float = 0.5,
+        timeout: int = 10,
+        **kwargs
+    ) -> requests.Response:
+        """Make a request to the etherscan api with retry"""
+        # initial vars
+        max_attempt = max_attempt
+        wait_time = wait_time
+        attempt = 0
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.93 Safari/537.36"
+        }
+
+        while True:
+            try:
+                # make request
+                params["apikey"] = self.get_apikey()
+                response = requests.get(url, params=params, headers=headers, timeout=timeout, **kwargs)
+
+                # check status code
+                if response.status_code == 200:
+                    if response.json().get("status") == "0" and response.json().get("message") != "No transactions found":
+                        raise ConnectionError(response.json().get("message"))
+                    return response.json()
+                else:
+                    raise ConnectionError(f"Request failed with status code {response.status_code}")
+            except (ConnectionError, requests.exceptions.ReadTimeout) as e:
+                # check if we have reached max attempt
+                logging.warning(f"WARNING: Failed to fetch Etherscan API [{attempt}/{max_attempt}], retrying...")
+                if attempt == max_attempt:
+                    raise e
+
+                # sleep for a bit
+                time.sleep(wait_time)
+
+                # increment attempt
+                attempt += 1
+
+    def get_transaction_receipt(
+        self,
+        tx_hash: str,
+        timeout: int = 60,
+        max_attempt: int = 20,
+        wait_time: float = 0.5,
+        **kwargs
+    ) -> dict:
+        """Get the transaction receipt for a specifed tx hash"""
+        response = self.request_with_retry(
+            url=self.api_url,
+            params={
+                "module": "proxy",
+                "action": "eth_getTransactionReceipt",
+                "txhash": tx_hash,
+            },
+            max_attempt=max_attempt,
+            wait_time=wait_time,
+            timeout=timeout,
+            **kwargs
+        )
+
+        return response["result"]
 
     def get_transaction_by_address(
         self, 
@@ -156,88 +250,82 @@ class ScanAPI(object):
         # initialize empty txs
         transactions = []
 
-        # start request sessionts
-        session = Session()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.93 Safari/537.36"
-        }
-
         # initial vars
         page = 1
-        max_attempt = max_attempt
-        wait_time = wait_time
         last_page = False
 
         while True:
             # iterate infinitely until reach the last page
-            n_attempt = 0
-            is_success = False
 
-            while True:
-                # iterate infinitely until get a successful response
-                try:
-                    if n_attempt > max_attempt:
-                        # stop if reach the max attempt
-                        raise Exception("Reach max attempt")
-                        
-                    # api params
-                    _params = {
-                        "module": "account",
-                        "action": "txlist",
-                        "address": address,
-                        "startblock": startblock,
-                        "endblock": endblock,
-                        "page": page,
-                        "offset": offset,
-                        "sort": "asc",
-                        "apikey": self.__get_apikey()
-                    }
-                    _params = {**_params, **kwargs}
-                    
-                    # make the request to the scan API
-                    response = session.get(
-                        url=self.api_url, 
-                        params=_params, 
-                        headers=headers,
-                        timeout=timeout)
+            logging.debug(f"Fetching page {page} for address {address}")
+            response = self.request_with_retry(
+                url=self.api_url,
+                params={
+                    "module": "account",
+                    "action": "txlist",
+                    "address": address,
+                    "startblock": startblock,
+                    "endblock": endblock,
+                    "page": page,
+                    "offset": offset,
+                    "sort": "asc",
+                },
+                max_attempt=max_attempt,
+                wait_time=wait_time,
+                **kwargs)
 
-                    if response.status_code == 200:
-                        # if success, parse the response
-                        # and add the tx to the list
-                        is_success = True
-                        response = response.json()
+            if response["result"]:
+                # if there are txs, parse the response
+                for tx in response["result"]:
+                    if tx["isError"] == "1":
+                        # skip failed txs
+                        continue
+                    # add the from_address and to_address to the tx
+                    # from was reserved keyword in python
+                    tx["from_address"] = tx["from"]
+                    tx["to_address"] = tx["to"]
+                    # convert the tx to ScanTxn object
+                    try:
+                        tx["input"] = self.diamond_contract.decode_input(tx["input"])
+                    except ValueError as e:
+                        # skip contract creation txs
+                        logging.warning(f"WARNING: Failed to decode input [{self.chain} : {tx['hash']}]: {e}")
+                        pass
 
-                        if response["result"]:
-                            # if there are txs, parse the response
-                            for tx in response["result"]:
-                                # add the from_address and to_address to the tx
-                                # from was reserved keyword in python
-                                tx["from_address"] = tx["from"]
-                                tx["to_address"] = tx["to"]
-                                # convert the tx to ScanTxn object
-                                txs = ScanTxn(chain=self.chain, **tx)
-                                transactions.append(txs)
-                        else:
-                            # if there are no txs, break the loop
-                            # as we have reached the last page
-                            last_page = True
-                            break
-                    else:
-                        # if not success, raise an exception
-                        # this will trigger the retry
-                        raise ConnectionError("Response status code is not 200")
-
-                    if is_success:
-                        break
-
-                except ConnectionError:
-                    # if there is a connection error, retry
-                    logging.warning(f"WARNING: Failed to fetch Etherscan API [{n_attempt}/{max_attempt}], retrying...")
-                    time.sleep(wait_time)
-                    n_attempt += 1
+                    txs = ScanTxn(chain=self.chain, **tx)
+                    transactions.append(txs)
+            else:
+                # if there are no txs, break the loop
+                # as we have reached the last page
+                last_page = True
+                break
 
             if last_page:
                 break
             page += 1
 
         return transactions
+
+
+    def resolve_blocktime(
+        self, 
+        blocktime: int,
+        max_attempt: int = 5,
+        wait_time: int = 1,
+        timeout: int = 10,
+        **kwargs) -> int:
+        """Convert blocktime to unix timestamp"""
+        response = self.request_with_retry(
+            url=self.api_url,
+            params={
+                "module": "block",
+                "action": "getblockreward",
+                "blockno": blocktime,
+            },
+            max_attempt=max_attempt,
+            wait_time=wait_time,
+            timeout=timeout,
+            **kwargs
+        )
+
+        return response["result"]["timeStamp"]

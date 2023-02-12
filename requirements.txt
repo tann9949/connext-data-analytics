@@ -2,9 +2,10 @@
 jupyter
 jupyterlab
 matplotlib
-omegaconf
 
 # packages
+web3
 requests
 omegaconf
 python-dotenv
+pandas

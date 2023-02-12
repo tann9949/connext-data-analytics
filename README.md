@@ -29,6 +29,19 @@ This repository assumes you have API keys from block explorer. You can add multi
 
 An example of `.env` file configuration can be found at [`.env.example`](./.env.example)
 
+
+### Fething historical transactions
+We provide an analytics using the following procedure:
+1. Fetching historical transaction data via Block Explorer API
+2. Aggregates and transform into a readible `csv`
+3. Provide an analysis on a jupyter notebook
+Thus, it's important to fetch the historical data first. To fetch the historical data, run the following command:
+```bash
+cd scripts
+./fetch_txn.sh
+```
+This could take a while as it fetch all transaction data as well as transaction receipt
+
 ### Using notebooks
 Activate the python environment according to this [section](#1-optinal-create-virtualenv), if you have one. Then, run the following command:
 ```bash
