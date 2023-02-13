@@ -197,6 +197,8 @@ class ScanAPI(object):
                 if response.status_code == 200:
                     if response.json().get("status") == "0" and response.json().get("message") != "No transactions found":
                         raise ConnectionError(response.json().get("message"))
+                    elif response.json()["result"] is None:
+                        raise ConnectionError("No result found")
                     return response.json()
                 else:
                     raise ConnectionError(f"Request failed with status code {response.status_code}")
