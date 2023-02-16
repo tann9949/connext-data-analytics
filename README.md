@@ -38,7 +38,7 @@ We provide an analytics using the following procedure:
 Thus, it's important to fetch the historical data first. To fetch the historical data, run the following command:
 ```bash
 cd scripts
-./fetch_txn.sh
+./fetch.sh
 ```
 This could take a while as it fetch all transaction data as well as transaction receipt
 
