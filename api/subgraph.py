@@ -83,6 +83,7 @@ class UniswapV3SubGraph(BaseSubGraphQuery):
             }
         }"""
         result = self.query(query)
+        logging.debug(result)
         return result["data"]["pools"]
     
 

@@ -6,7 +6,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 def main():
     fetcher = WETHPriceFetcher()
-    fetcher.multiprocess_fetch(num_workers=30)
+    fetcher.multiprocess_fetch(num_workers=40)
 
 
 if __name__ == "__main__":

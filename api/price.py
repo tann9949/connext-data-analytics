@@ -28,12 +28,6 @@ class WETHPriceFetcher(object):
         if not os.path.exists(self.save_path):
             with open(self.save_path, "w") as fp:
                 fp.write("blocktime,unixtime,price\n")
-        df = self.load_cache()
-        if len(df) == 0:
-            self.initial_block = ConnextAPI.get_init_block(Chain.ETHEREUM)
-        else:
-            df = self.load_cache()
-            self.initial_block = df["blocktime"].max()
 
         self.eth_block_sg = EthereumBlocksSubGraph()
         self.univ3_sg = UniswapV3SubGraph()
@@ -65,7 +59,7 @@ class WETHPriceFetcher(object):
     def sort_cache(self) -> None:
         """Sort cache by blocktime"""
         df = self.load_cache()
-        df = df.sort_values("blocktime")
+        df = df.sort_values("blocktime").drop_duplicates()
         df.to_csv(self.save_path, index=False)
     
     def multiprocess_fetch(self, num_workers: Optional[int] = None) -> Dict[str, Dict[str, float]]:
@@ -86,12 +80,15 @@ class WETHPriceFetcher(object):
             num_workers = mp.cpu_count() - 1
         # get blocktimes
         provider = SmartContract.get_default_provider(Chain.ETHEREUM)
-        final_block = provider.eth.get_block_number()
+        start_block = ConnextAPI.get_init_block(Chain.ETHEREUM)
+        end_block = provider.eth.get_block_number()
 
-        logging.info(f"Fetching prices from block {self.initial_block} to {final_block}")
+        data = self.load_cache()
+        blocks = sorted(set(range(start_block, end_block)) - set(data["blocktime"].unique()))
+        logging.info(f"Fetching prices from block {start_block} to {end_block} ({len(blocks)} blocks)")
         
         pool = mp.Pool(num_workers)
         pool.map(
             self.fetch_eth_price, 
-            range(self.initial_block, final_block))
+            blocks)
         self.sort_cache()
