@@ -31,6 +31,24 @@ class ConnextAPI(object):
             Chain.ARBITRUM_ONE: ScanAPI(Chain.ARBITRUM_ONE),
         }
 
+    @staticmethod
+    def get_init_block(chain: Chain = Chain.ETHEREUM) -> int:
+        """Get initial block for chain"""
+        if chain == Chain.ETHEREUM:
+            return 16233067
+        elif chain == Chain.BNB_CHAIN:
+            return 24097171
+        elif chain == Chain.POLYGON:
+            return 37100615
+        elif chain == Chain.OPTIMISM:
+            return 53024542
+        elif chain == Chain.GNOSIS:
+            return 25562300
+        elif chain == Chain.ARBITRUM_ONE:
+            return 47824792
+        else:
+            raise ValueError(f"Invalid chain {chain}")
+
     def load_cache(self) -> Dict[Chain, List[ScanTxn]]:
         """Load cache from data directory"""
         logging.info("Loading cache")
