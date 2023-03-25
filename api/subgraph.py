@@ -5,6 +5,8 @@ from typing import List, Union, Optional
 import pandas as pd
 import requests
 
+from api.constant import Chain
+
 
 class BaseSubGraphQuery(object):
 
@@ -129,4 +131,114 @@ class EthereumBlocksSubGraph(BaseSubGraphQuery):
         }"""
         result = self.query(query)
         result = [_r["timestamp"] for _r in result["data"]["blocks"]]
+        return result
+
+
+class ConnextSubgraph(BaseSubGraphQuery):
+
+    def __init__(self, chain: Chain) -> None:
+        self.chain = chain
+        subgraph_url = ConnextSubgraph.get_subgraph_url(chain)
+        super().__init__(
+            subgraph_url=subgraph_url)
+        
+    @staticmethod
+    def get_subgraph_url(chain: Chain) -> str:
+        if chain == Chain.ETHEREUM:
+            return "https://api.thegraph.com/subgraphs/name/connext/amarok-runtime-v0-mainnet"
+        elif chain == Chain.POLYGON:
+            return "https://api.thegraph.com/subgraphs/name/connext/amarok-runtime-v0-polygon"
+        elif chain == Chain.GNOSIS:
+            return "https://api.thegraph.com/subgraphs/name/connext/amarok-runtime-v0-gnosis"
+        elif chain == Chain.ARBITRUM_ONE:
+            return "https://api.thegraph.com/subgraphs/name/connext/amarok-runtime-v0-arbitrum-one"
+        elif chain == Chain.OPTIMISM:
+            return "https://api.thegraph.com/subgraphs/name/connext/amarok-runtime-v0-optimism"
+        elif chain == Chain.BNB_CHAIN:
+            return "https://api.thegraph.com/subgraphs/name/connext/amarok-runtime-v0-bnb"
+        else:
+            raise NotImplementedError(f"Chain {chain} not supported")
+        
+    def get_ori_transfer(self, tx_hash: str) -> dict:
+        query = """{
+            originTransfers(
+                where: {
+                transactionHash: \"""" + str(tx_hash) + """\"
+                }
+            ) {
+                timestamp
+
+                chainId
+                transferId
+                nonce
+                to
+                delegate
+                receiveLocal
+                callData
+                slippage
+                relayerFee
+                originSender
+                originDomain
+                destinationDomain
+                transactionHash
+                bridgedAmt
+                status
+                timestamp
+                normalizedIn
+                asset {
+                    id
+                    adoptedAsset
+                    canonicalId
+                    canonicalDomain
+                }
+            }
+        }"""
+        result = self.query(query)
+        return result
+    
+    def get_dest_transfer(self, transfer_id: str) -> dict:
+        query = """{
+            destinationTransfers(
+                where: {
+                transferId: \"""" + str(transfer_id) + """\"
+                }
+            ) {
+                chainId
+                nonce
+                transferId
+                to
+                callData
+                originDomain
+                destinationDomain
+                delegate
+                
+                asset {
+                    id
+                }
+                bridgedAmt
+                
+                status
+                routers {
+                    id
+                }
+                originSender
+                
+                executedCaller
+                executedTransactionHash
+                executedTimestamp
+                executedGasPrice
+                executedGasLimit
+                executedBlockNumber
+                
+                reconciledCaller
+                reconciledTransactionHash
+                reconciledTimestamp
+                reconciledGasPrice
+                reconciledGasLimit
+                reconciledBlockNumber
+                routersFee
+                slippage
+            }
+        }"""
+        result = self.query(query)
         return result

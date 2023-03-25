@@ -3,11 +3,11 @@ import logging
 import os
 import random
 import time
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
 
 import requests
 
-from api.constant import Chain
+from api.constant import Chain, DiamondContract
 from api.contract import ConnextDiamond
 
 
@@ -27,16 +27,16 @@ class ScanTxn(object):
         value: Union[int, str],
         gas: Union[int, str],
         gasPrice: Union[int, str],
-        isError: Union[int, str],
-        txreceipt_status: Union[int, str],
         input: str,
         contractAddress: str,
         cumulativeGasUsed: Union[int, str],
         gasUsed: Union[int, str],
         confirmations: Union[int, str],
-        methodId: str,
-        functionName: str,
-        logs: List[dict] = None,
+        isError: Optional[Union[int, str]] = None,
+        txreceipt_status: Optional[Union[int, str]] = None,
+        functionName: Optional[str] = None,
+        methodId: Optional[str] = None,
+        logs: Optional[List[dict]] = None,
         **kwargs
     ) -> None:
         self.chain = chain
@@ -66,16 +66,16 @@ class ScanTxn(object):
         self.value = int(value)
         self.gas = int(gas)
         self.gasPrice = int(gasPrice)
-        self.isError = int(isError)
-        self.txreceipt_status = int(txreceipt_status)
         self.input = input
         self.contractAddress = contractAddress
         self.cumulativeGasUsed = int(cumulativeGasUsed)
         self.gasUsed = int(gasUsed)
         self.confirmations = int(confirmations)
-        self.methodId = methodId
-        self.functionName = functionName
 
+        self.isError = isError if isError is None else int(isError)
+        self.methodId = methodId if methodId is None else methodId
+        self.functionName = functionName if functionName is None else functionName
+        self.txreceipt_status = txreceipt_status if txreceipt_status is None else int(txreceipt_status)
         self.logs = logs
 
         self.tx_url = f"{self.scan_url}/{self.hash}"
@@ -294,6 +294,79 @@ class ScanAPI(object):
                         logging.warning(f"WARNING: Failed to decode input [{self.chain} : {tx['hash']}]: {e}")
                         pass
 
+                    txs = ScanTxn(chain=self.chain, **tx)
+                    transactions.append(txs)
+            else:
+                # if there are no txs, break the loop
+                # as we have reached the last page
+                last_page = True
+                break
+
+            if last_page:
+                break
+            page += 1
+
+        return transactions
+    
+    def get_transfer_events(
+        self, 
+        token_address: str, 
+        startblock: int = 0,
+        endblock: int = 999999999,
+        offset: int = 1000,
+        timeout: int = 60,
+        max_attempt: int = 20,
+        wait_time: float = 0.5,
+        **kwargs) -> List[ScanTxn]:
+        """Get the list of transfer transactions for a specifed contracts"""
+        # contract address
+        contract_address =  DiamondContract.get_contract_address(self.chain)
+        null_address = "0x0000000000000000000000000000000000000000"
+
+        # initialize empty txs
+        transactions = []
+
+        # initial vars
+        page = 1
+        last_page = False
+
+        while True:
+            # iterate infinitely until reach the last page
+
+            logging.debug(f"Fetching page {page} for token {token_address}")
+
+            params = {
+                "module": "account",
+                "action": "tokentx",
+                "contractaddress": token_address,
+                "startblock": startblock,
+                "endblock": endblock,
+                "page": page,
+                "offset": offset,
+                "sort": "asc",
+            }
+            logging.debug(f"params: {params}")
+            response = self.request_with_retry(
+                url=self.api_url,
+                params=params,
+                max_attempt=max_attempt,
+                wait_time=wait_time,
+                **kwargs)
+
+            if response["result"]:
+                # if there are txs, parse the response
+                for tx in response["result"]:
+                    # add the from_address and to_address to the tx
+                    # from was reserved keyword in python
+                    tx["from_address"] = tx["from"]
+                    tx["to_address"] = tx["to"]
+
+                    # remove transaction from/to 0x0000
+                    if tx["from_address"] == null_address or tx["to_address"] == null_address:
+                        logging.debug(f"Skipping transaction {tx['hash']} as it is from/to 0x0000")
+                        continue
+
+                    # convert the tx to ScanTxn object
                     txs = ScanTxn(chain=self.chain, **tx)
                     transactions.append(txs)
             else:

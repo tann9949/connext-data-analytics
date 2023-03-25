@@ -7,6 +7,8 @@ from typing import Dict, List
 
 from api.constant import Chain, DiamondContract
 from api.scan import ScanAPI, ScanTxn
+from api.subgraph import ConnextSubgraph
+from api.token import Token
 
 
 class ConnextAPI(object):
@@ -29,6 +31,9 @@ class ConnextAPI(object):
             Chain.OPTIMISM: ScanAPI(Chain.OPTIMISM),
             Chain.GNOSIS: ScanAPI(Chain.GNOSIS),
             Chain.ARBITRUM_ONE: ScanAPI(Chain.ARBITRUM_ONE),
+        }
+        self.graphs = {
+            chain: ConnextSubgraph(chain) for chain in self.scan_api.keys()
         }
 
     @staticmethod
@@ -154,6 +159,105 @@ class ConnextAPI(object):
             tx = ScanTxn.from_json(json_path)
             if tx.logs is None:
                 cache_files.append(json_path)
+        # start multiprocessing
+        with mp.Pool(12) as pool:
+            pool.map(ConnextAPI.resolve_receipt, cache_files)
+
+        return data
+    
+
+class ConnextLPTransferAPI(object):
+
+    def __init__(self, data_dir: str = "data"):
+        self.data_dir = data_dir
+        self.scan_api = {
+            Chain.BNB_CHAIN: ScanAPI(Chain.BNB_CHAIN),
+            Chain.POLYGON: ScanAPI(Chain.POLYGON),
+            Chain.OPTIMISM: ScanAPI(Chain.OPTIMISM),
+            Chain.GNOSIS: ScanAPI(Chain.GNOSIS),
+            Chain.ARBITRUM_ONE: ScanAPI(Chain.ARBITRUM_ONE),
+        }
+
+    def load_cache(self) -> Dict[Chain, List[ScanTxn]]:
+        """Load cache from data directory"""
+        logging.info("Loading cache")
+        data_path = f"{self.data_dir}/lp_transfer_txs"
+        if not os.path.exists(data_path):
+            # create empty cache
+            logging.info("Cache not found, creating empty cache")
+            return {chain: [] for chain in self.scan_api.keys()}
+        else:
+            # load cache
+            logging.info("Cache found, loading cache")
+            data = {chain: [] for chain in self.scan_api.keys()}
+            for chain in self.scan_api.keys():
+                for tx in os.listdir(f"{data_path}/{chain}"):
+                    with open(f"{data_path}/{chain}/{tx}", "r") as fp:
+                        # logging.debug(f"Loading {tx} from `{data_path}/{chain}/{tx}`")
+                        data[chain].append(ScanTxn(**json.load(fp)))
+            # sort by block number
+            data = {chain: sorted(data[chain], key=lambda x: x.blockNumber) for chain in data.keys()}
+            return data
+        
+    def save_cache(self, data: Dict[Chain, List[ScanTxn]]) -> None:
+        """Save cache to data directory"""
+        data = data.copy()
+        logging.info("Saving cache")
+        data_path = f"{self.data_dir}/lp_transfer_txs"
+        # convert to dict
+        for chain in data.keys():
+            for tx in data[chain]:
+                save_path = f"{data_path}/{chain}/{tx.hash}.json"
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                with open(save_path, "w") as fp:
+                    json.dump(tx.to_json(), fp, indent=4)
+    
+    def load_transfers(self) -> Dict[Chain, List[ScanTxn]]:
+        """Load transfers from scan API"""
+        data = self.load_cache()
+        # get latest block number
+        latest_block = {
+            chain: max([tx.blockNumber for tx in data[chain]]) + 1 if data[chain] else 0
+            for chain in self.scan_api.keys()
+        }
+
+        amarok_transfer = {chain: [] for chain in self.scan_api.keys()}
+        for chain in self.scan_api.keys():
+            for token in [Token.USDC, Token.WETH]:
+                token_address = Token.get_lp(chain, token).address
+                amarok_transfer[chain].extend(self.scan_api[chain].get_transfer_events(
+                    token_address=token_address, 
+                    startblock=latest_block[chain]))
+
+        # if no new transactions, return cache
+        for chain in self.scan_api.keys():
+            logging.info(f"Number of new transfers on {chain}: {len(amarok_transfer[chain])}")
+
+        if all([len(amarok_transfer[chain]) == 0 for chain in self.scan_api.keys()]):
+            logging.info("No new transfers, returning cache")
+        else:
+            # update cache
+            logging.info("Updating cache")
+            for chain in self.scan_api.keys():
+                data[chain] += amarok_transfer[chain]
+
+            # sort by block number
+            for chain in self.scan_api.keys():
+                data[chain] = sorted(data[chain], key=lambda x: x.blockNumber)
+
+            # save cache
+            self.save_cache(data)
+            
+        # multiprocessing resolve receipt
+        logging.info("Resolving receipt")
+        # create cache files
+        cache_files = []
+        for json_path in sorted(glob(f"{self.data_dir}/lp_transfer_txs/**/*.json")):
+            tx = ScanTxn.from_json(json_path)
+            if tx.logs is None:
+                cache_files.append(json_path)
+                
+        print(f"Resolving {len(cache_files)} txs")
         # start multiprocessing
         with mp.Pool(12) as pool:
             pool.map(ConnextAPI.resolve_receipt, cache_files)

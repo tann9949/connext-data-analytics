@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 class Chain:
     ETHEREUM = "ethereum"
     OPTIMISM = "optimism"
@@ -5,6 +8,25 @@ class Chain:
     BNB_CHAIN = "bnb_chain"
     GNOSIS = "gnosis"
     POLYGON = "polygon"
+        
+    @staticmethod
+    def resolve_connext_domain(domain_id: int) -> Chain:
+        if isinstance(domain_id, str):
+            domain_id = int(domain_id)
+        if domain_id == 6648936:
+            return Chain.ETHEREUM
+        elif domain_id == 1869640809:
+            return Chain.OPTIMISM
+        elif domain_id == 1634886255:
+            return Chain.ARBITRUM_ONE
+        elif domain_id == 6450786:
+            return Chain.BNB_CHAIN
+        elif domain_id == 6778479:
+            return Chain.GNOSIS
+        elif domain_id == 1886350457:
+            return Chain.POLYGON
+        else:
+            raise Exception("Domain {domain_id} not supported")
 
 
 class DiamondContract:
